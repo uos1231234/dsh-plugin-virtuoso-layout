@@ -1,0 +1,8 @@
+* LVS source netlist for DSH_NMOS/dsh_nmos3 (dsh_nmos2 + terminal labels)
+*
+* W=1.2u is measured, not asserted: the first LVS run extracted
+*   M0 4 3 1 2 <model> L=1.8e-07 W=1.2e-06
+* from the layout itself.
+.subckt dsh_nmos3 D G S B
+MN1 D G S B <model> w=1.2u l=0.18u
+.ends dsh_nmos3

@@ -1,0 +1,5 @@
+* LVS source netlist for DSH_NMOS/dsh_nmos9
+* W=1.2u measured by Calibre from the layout, not assumed.
+.subckt dsh_nmos9 D G S B
+MN1 D G S B <model> w=1.2u l=0.18u
+.ends dsh_nmos9

@@ -1,0 +1,6 @@
+* LVS source netlist for DSH_NMOS/dsh_nmos15
+* NMOS inside a P+ guard ring; the ring is the body (substrate) tie.
+* W=1.2u measured by Calibre from the layout, not assumed.
+.subckt dsh_nmos15 D G S B
+MN1 D G S B <model> w=1.2u l=0.18u
+.ends dsh_nmos15

@@ -1,0 +1,25 @@
+;; trace2.il — isolate the remaining suspects: quoted-list foreach, view->viewType
+;; access, null(), dbOpenCellViewByType, hiGetCurrentWindow.
+let((p n cv)
+  p = outfile("/tmp/dsh_trace2.txt" "w")
+  fprintf(p "A start\n")
+  n = 0
+  foreach(x '("a" "b" "c") n = n + 1)
+  fprintf(p "B quoted-list ok n=%d\n" n)
+  let((d c v)
+    d = ddGetObj("OSC_DESIGN")
+    c = car(d->cells)
+    v = car(c->views)
+    fprintf(p "C first=%s views=%d\n" c->name length(c->views))
+    fprintf(p "D viewobj=%L\n" v)
+    fprintf(p "E name=%s\n" v->name)
+    fprintf(p "F type=%s\n" v->viewType)
+    fprintf(p "G null test=%L\n" null(nil))
+    cv = dbOpenCellViewByType("OSC_DESIGN" c->name v->name v->viewType "r")
+    fprintf(p "H opened=%L\n" cv)
+    fprintf(p "I curwin=%L\n" hiGetCurrentWindow())
+  )
+  fprintf(p "J done\n")
+  close(p)
+  t
+)

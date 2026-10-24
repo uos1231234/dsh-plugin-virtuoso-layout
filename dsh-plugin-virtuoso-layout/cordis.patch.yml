@@ -1,0 +1,28 @@
+# Rows contributed by the Virtuoso layout bundle.
+#
+# A bundle's patch layer is a list of `@deepseek-ai/cordis-plugin-include`
+# PatchOptions, applied over the previous layers. Two shapes matter, and mixing
+# them up fails SILENTLY:
+#
+#   - id: existing-row          -> id-targeted OVERRIDE of a row that already
+#     config: {...}                exists. An id matching no row stays a
+#                                  per-entry Loader warning and is dropped.
+#   - insert: [...]             -> NEW rows. This is what a bundle adding its
+#                                  own plugin must use.
+#
+# This file originally used the first shape with a fresh id, so the row matched
+# nothing, produced only a warning, and never mounted. Verified in
+# dsh-app-boot/lib/index.js: `anchorInsertedPluginNames` walks `patch.insert`
+# only, which is also where relative `name` values are anchored.
+#
+# `name` starts with `./`, so the loader rewrites it to a `file://` URL resolved
+# against this file's own directory. That keeps the row independent of Node
+# module resolution and of the bundle package's own name.
+#
+# The row deliberately declares no `config`, so the plugin exports no `Config`
+# schema and needs no @deepseek-ai/schemastery import. That keeps the bundle at
+# zero dependencies, which is what makes it installable despite the runtime
+# (0.2.0-rc.2) and the published packages (0.1.2-rc.1) disagreeing on peers.
+- insert:
+    - id: virtuoso-layout
+      name: "./lib/index.js"

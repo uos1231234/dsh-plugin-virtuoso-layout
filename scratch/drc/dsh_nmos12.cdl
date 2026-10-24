@@ -1,0 +1,5 @@
+* LVS source netlist for DSH_NMOS/dsh_nmos12 (device + tap + N-well pickup)
+* W=1.2u measured by Calibre; the n-well pickup is a separate N+ tap.
+.subckt dsh_nmos12 D G S B
+MN1 D G S B <model> w=1.2u l=0.18u
+.ends dsh_nmos12

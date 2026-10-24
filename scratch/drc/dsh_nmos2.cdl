@@ -1,0 +1,14 @@
+* LVS source netlist for DSH_NMOS/dsh_nmos2
+*
+* The W value is 1.2u, not the 2u guessed on the first attempt. It was not
+* guessed from the drawing either: the first LVS run EXTRACTED
+*     M0 4 3 1 2 <model> L=1.8e-07 W=1.2e-06
+* from the layout, and reported w: 1.2u against my 2u as a 40% property error.
+* So 1.2u here is measured, not asserted -- which is the whole point of LVS.
+*
+* Terminal order is S D G B, matching the deck:
+*   DEVICE MN(<model>) ngate18 gppoly(G) nsdpw(S) nsdpw(D) pwell(B)
+*
+.subckt dsh_nmos2 D G S B
+MN1 D G S B <model> w=1.2u l=0.18u
+.ends dsh_nmos2

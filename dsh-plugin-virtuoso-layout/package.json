@@ -1,0 +1,22 @@
+{
+  "name": "dsh-plugin-virtuoso-layout",
+  "version": "0.1.0",
+  "description": "Virtuoso layout plugin for DeepSeek Harness: VM lifecycle, bridge/CIW SKILL execution, window capture, Calibre DRC parsing, persisted settings, and a write-confirmation gate. 12 host-only tools; see TOOLS.md for the generated reference.",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "files": [
+    "lib",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "license": "MIT"
+}

@@ -1,0 +1,24 @@
+# Normalise line endings in the index so a Windows checkout and a Linux/macOS
+# one agree on what changed. Without this every `git add` prints a CRLF warning
+# per file and `git diff` churns on whitespace alone.
+* text=auto
+
+# Shell / SKILL / Python sources are consumed on the Linux guest. Forcing LF
+# stops a Windows-side edit from breaking them with CRLF: a CRLF in a SKILL
+# file or a shell script is a real syntax error there, not a style choice.
+*.il    text eol=lf
+*.sh    text eol=lf
+*.py    text eol=lf
+*.csh   text eol=lf
+
+# Windows-side artefacts keep whatever PowerShell writes.
+*.ps1   text eol=crlf
+*.bat   text eol=crlf
+*.cmd   text eol=crlf
+
+# Binaries: never diff, never convert.
+*.png   binary
+*.jpg   binary
+*.gif   binary
+*.pdf   binary
+*.xwd   binary

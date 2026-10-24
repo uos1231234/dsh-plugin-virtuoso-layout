@@ -1,0 +1,28 @@
+// DRC runset for Calibre, SMIC 0.18 (smic18ee), cell DSH_NMOS/dsh_nmos2
+//
+// Why a runset instead of the deck's own defaults: the shipped deck hardcodes
+//     LAYOUT PATH "xxx.gds" / DRC RESULTS DATABASE "drc_cal.out"
+// so the three lines that say WHAT to check are all placeholders. Overriding
+// them here means the deck file itself stays untouched (it is foundry material,
+// and edits to it would make every later run unreproducible).
+//
+// The input is GDS, not the OA database: Calibre reads GDSII. So the flow is
+// streamOut -> calibre -drc -> parse. That round trip also proves the layout
+// really is in the database with the layers we think it has, rather than only
+// appearing so in the editor.
+
+// ---- what to check ---------------------------------------------------------
+LAYOUT PATH "/tmp/drc/dsh_nmos2.gds"
+LAYOUT PRIMARY "dsh_nmos2"
+LAYOUT SYSTEM GDSII
+
+DRC RESULTS DATABASE "/tmp/drc/dsh_nmos2.drc.results" ASCII
+DRC SUMMARY REPORT    "/tmp/drc/dsh_nmos2.drc.summary"
+
+// Keep going after the first error so one run yields the whole picture.
+DRC MAXIMUM RESULTS 1000
+DRC MAXIMUM VERTEX 4096
+
+// Threads: the guest has few cores; requesting more than exist only adds
+// scheduling noise to the timing numbers.
+DRC NUM THREADS 2
