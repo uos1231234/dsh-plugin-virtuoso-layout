@@ -1,5 +1,5 @@
 /** OpenAccess reads and writes over the existing Virtuoso SKILL bridge. */
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { bridgeEval, diagnoseEvalResult } from './virtuoso.js'
 
 const PROTOCOL = 'DSH_LAYOUT_OA_V1'
@@ -122,7 +122,7 @@ function schematicProgram(source) {
             ${record('PARAM', 'inst~>name', '"instance"', 'prop~>name', 'prop~>valueType', 'prop~>value')})))`)
 }
 
-const layoutObjects = `
+const layoutObjects = ({ geometry = false } = {}) => `
       ${record('UNITS', 'cv~>userUnits', 'cv~>DBUPerUU')}
       foreach(inst cv~>instances
         ${record('INST', 'inst~>name', 'inst~>libName', 'inst~>cellName', 'inst~>viewName',
@@ -142,7 +142,7 @@ const layoutObjects = `
       foreach(fig cv~>shapes
         unless(fig~>pin
           if(fig~>objType == "path" then
-            ${record('ROUTE', 'fig~>net~>name', 'fig~>layerName', 'fig~>purpose', 'fig~>points', 'fig~>width', 'fig~>pathStyle')}
+            ${record('ROUTE', 'fig~>net~>name', 'fig~>layerName', 'fig~>purpose', 'fig~>points', 'fig~>width', 'fig~>pathStyle', ...(geometry ? ['fig~>bBox'] : []))}
           else
             when(fig~>objType == "label"
               ${record('LABEL', 'fig~>theLabel', 'fig~>layerName', 'fig~>purpose', 'fig~>xy',
@@ -151,7 +151,10 @@ const layoutObjects = `
               'when(fig~>objType == "label" fig~>theLabel)', 'when(fig~>objType == "polygon" fig~>points)')})))
       foreach(via cv~>vias
         ${record('VIA', 'via~>net~>name', 'via~>viaHeader~>viaDefName', 'via~>origin', 'via~>orient',
-          'via~>viaHeader~>overrideParams', 'via~>bBox', 'via~>objType')})`
+          'via~>viaHeader~>overrideParams', 'via~>bBox', 'via~>objType', ...(geometry ? [
+            'via~>viaHeader~>viaDef~>layer1~>name', 'via~>viaHeader~>viaDef~>layer2~>name',
+            'when(via~>objType == "stdVia" techGetLayerName(techGetTechFile(cv) via~>cutLayer))',
+          ] : []))})`
 
 function decodeSnapshot(output, expectedKind, requested) {
   if (typeof output !== 'string') throw new Error('OpenAccess reader returned no text')
@@ -220,9 +223,9 @@ function decodeSnapshot(output, expectedKind, requested) {
       case 'NET': result.nets.push({ name: a, bits: b, signalType: c, global: d === true }); break
       case 'TERM': result.terms.push({ name: a, net: b, direction: c, bits: d }); break
       case 'UNITS': result.userUnits = a; result.dbuPerUU = b; break
-      case 'ROUTE': result.routes.push({ net: a, layer: b, purpose: c, points: d, width: e, style: f }); break
+      case 'ROUTE': result.routes.push({ net: a, layer: b, purpose: c, points: d, width: e, style: f, ...(g && { bbox: g }) }); break
       case 'VIA': result.vias.push({ net: a, definition: b, origin: c, orient: d,
-        parameters: (e ?? []).map(([name, value]) => ({ name, value })), bbox: f, kind: g }); break
+        parameters: (e ?? []).map(([name, value]) => ({ name, value })), bbox: f, kind: g, ...(row.length > 8 && { layers: [h, row[9], row[10]].filter(Boolean) }) }); break
       case 'PIN': result.pins.push({ term: a, net: b, layer: c, purpose: d, bbox: e, name: f, kind: g }); break
       case 'LABEL': result.labels.push({ text: a, layer: b, purpose: c, origin: d, justification: e,
         orient: f, font: g, height: h, term: row[9] }); break
@@ -247,7 +250,11 @@ function decodeSnapshot(output, expectedKind, requested) {
   }
   // Include identities, OA revision and the actual content, independent of
   // enumeration order and transient OA object addresses.
-  const sortedRows = rows.map((row) => JSON.stringify(row)).sort()
+  const sortedRows = rows.map((row) => {
+    // Diagnostic geometry extends the readback without invalidating saved build stamps.
+    const core = row[0] === 'ROUTE' ? row.slice(0, 7) : row[0] === 'VIA' ? row.slice(0, 8) : row
+    return JSON.stringify(core)
+  }).sort()
   result.stamp = createHash('sha256').update(JSON.stringify([identity, sortedRows])).digest('hex')
   if (isLayout) {
     result.contentStamp = createHash('sha256')
@@ -299,7 +306,7 @@ export async function readSchematic(config, source, options = {}) {
 
 export async function readLayout(config, target, options = {}) {
   try {
-    const output = await evalSkill(config, readProgram(target, 'layout', layoutObjects), options)
+    const output = await evalSkill(config, readProgram(target, 'layout', layoutObjects(options)), options)
     return { ok: true, layout: decodeSnapshot(output, 'layout', target) }
   } catch (error) {
     return { ok: false, error: error.message }
@@ -314,6 +321,111 @@ function typedValue({ name, type, value }) {
   if ((type === 'int' && Number.isSafeInteger(value)) || (type === 'string' && typeof value === 'string')
     || (type === 'boolean' && typeof value === 'boolean')) return literal(value)
   throw new Error(`Invalid type or value for PCell parameter ${name} (${type})`)
+}
+
+function parameterArgument(parameters) {
+  const entries = parameters.map((param) => `list(${literal(param.name)} ${literal(param.type)} ${typedValue(param)})`)
+  return entries.length ? `list(${entries.join(' ')})` : 'nil'
+}
+
+function queriedList(output, kind) {
+  const data = typeof output === 'string' && parsePrinted(output.trim())
+  if (!Array.isArray(data) || data[0] !== kind) throw new Error(`Invalid Virtuoso ${kind} query result`)
+  return data.slice(1)
+}
+
+/** Read the default master, or evaluate a variant in an unsaved scratch view. */
+export async function inspectPcell(config, { master, inLib, parameters }, options = {}) {
+  const scratchName = `dsh_query_${randomUUID().replaceAll('-', '')}`
+  const scratch = parameters !== undefined
+  const setup = scratch ? `
+    when(ddGetObj(${literal(inLib)} ${literal(scratchName)})
+      error("Scratch PCell query name already exists"))
+    cv=dbOpenCellViewByType(${literal(inLib)} ${literal(scratchName)} "layout" "maskLayout" "s")
+    unless(cv && cv~>mode == "s" error("Cannot open an unsaved scratch view"))
+    inst=dbCreateParamInstByMasterName(cv ${reference(master)} nil list(0 0) "R0" 1 ${parameterArgument(parameters)})
+    unless(inst && inst~>master~>superMaster error("Cannot evaluate the requested PCell variant"))
+    actual=inst~>master` : `
+    cv=dbOpenCellViewByType(${reference(master)} "maskLayout" "r")
+    unless(cv && cv~>isParamCell error("Requested layout master is not a PCell"))
+    when(cv~>modifiedButNotSaved error("Requested PCell has unsaved edits"))
+    actual=cv`
+  const skill = `let((cv actual inst data)
+    data=unwindProtect(
+      progn(
+        ${setup}
+        list("pcell" actual~>userUnits actual~>DBUPerUU actual~>bBox
+          foreach(mapcar param actual~>parameters~>value
+            list(param~>name param~>valueType param~>value))
+          foreach(mapcar term actual~>terminals
+            list(term~>name term~>direction
+              foreach(mapcan pin term~>pins
+                foreach(mapcar fig pin~>figs
+                  list(fig~>layerName fig~>purpose fig~>objType fig~>bBox))))))
+      )
+      when(cv dbClose(cv))
+    )
+    ${scratch ? `when(ddGetObj(${literal(inLib)} ${literal(scratchName)})
+      error("Scratch PCell query did not release its temporary view"))` : ''}
+    data
+  )`
+  const [userUnits, dbuPerUU, bbox, rawParameters, rawTerminals] =
+    queriedList(await evalSkill(config, skill, options), 'pcell')
+  const values = (rawParameters ?? []).map(([name, type, value]) => ({
+    name, type, value: type === 'boolean' ? value === true || value === 'TRUE' : value,
+  }))
+  for (const parameter of parameters ?? []) {
+    const actual = values.find(({ name }) => name === parameter.name)
+    const value = parameter.value
+    const matches = parameter.type === 'float' && typeof actual?.value === 'number'
+      ? Math.abs(actual.value - value) <= Math.abs(value) * 1e-12
+      : actual?.value === value
+    if (actual?.type !== parameter.type || !matches) {
+      throw new Error(`PCell did not apply ${parameter.name} with the requested type and value`)
+    }
+  }
+  return {
+    master, geometry: scratch ? 'evaluated-variant' : 'default-master', userUnits, dbuPerUU, bbox,
+    parameters: values,
+    terminals: (rawTerminals ?? []).map(([name, direction, figures]) => ({
+      name, direction, figures: (figures ?? []).map(([layer, purpose, kind, bbox]) => ({ layer, purpose, kind, bbox })),
+    })),
+  }
+}
+
+const standardViaFields = [
+  'cutLayer', 'cutWidth', 'cutHeight', 'cutRows', 'cutColumns', 'cutSpacing',
+  'layer1Enc', 'layer2Enc', 'layer1Offset', 'layer2Offset', 'originOffset',
+  'implant1Enc', 'implant2Enc',
+]
+
+export async function inspectTech(config, { lib, layers, vias }, options = {}) {
+  const skill = `let((library tf)
+    library=ddGetObj(${literal(lib)})
+    unless(library error("Virtuoso library does not exist"))
+    tf=techGetTechFile(library)
+    unless(tf error("No technology is attached to the library"))
+    list("tech" techGetTechLibName(library) techGetMfgGridResolution(tf)
+      foreach(mapcar lp ${layers.length ? `setof(l tf~>lps member(l~>name ${literal(layers)}))` : 'tf~>lps'}
+        list(lp~>name lp~>purpose lp~>layer~>number techGetPurposeNum(tf lp~>purpose) lp~>valid))
+      foreach(mapcar vd ${vias.length ? `setof(v tf~>viaDefs member(v~>name ${literal(vias)}))` : 'tf~>viaDefs'}
+        list(vd~>name vd~>objType vd~>layer1~>name vd~>layer2~>name
+          when(vd~>objType == "stdViaDef" vd~>params))))
+  )`
+  const [techLib, manufacturingGrid, rawLpps, rawVias] =
+    queriedList(await evalSkill(config, skill, options), 'tech')
+  const layerPurposes = (rawLpps ?? []).map(([layer, purpose, layerNumber, purposeNumber, valid]) => ({
+    layer, purpose, layerNumber, purposeNumber, valid: valid === true,
+  })).sort((a, b) => a.layer.localeCompare(b.layer) || a.purpose.localeCompare(b.purpose))
+  const viaDefinitions = (rawVias ?? []).map(([name, kind, layer1, layer2, params]) => ({
+    name, kind, layer1, layer2,
+    defaults: params ? Object.fromEntries(standardViaFields.slice(0, params.length)
+      .map((field, index) => [field, params[index]])) : null,
+  })).sort((a, b) => a.name.localeCompare(b.name))
+  return { lib, techLib, manufacturingGrid, layerPurposes, viaDefinitions,
+    missingLayers: layers.filter((name) => !layerPurposes.some(({ layer }) => layer === name)),
+    missingVias: vias.filter((name) => !viaDefinitions.some((via) => via.name === name)),
+  }
 }
 
 function requireSkill(condition, message) {
@@ -366,8 +478,7 @@ function buildCommands(plan) {
   }
   for (const instance of plan.instances) {
     const { name, master, origin, orient, parameters, terminals, multiplicity = 1 } = instance
-    const entries = parameters.map((param) => `list(${literal(param.name)} ${literal(param.type)} ${typedValue(param)})`)
-    const paramArg = entries.length ? `list(${entries.join(' ')})` : 'nil'
+    const paramArg = parameterArgument(parameters)
     commands.push(`inst = dbCreateParamInstByMasterName(cv ${reference(master)} ${literal(name)} ${literal(origin)} ${literal(orient)} ${literal(multiplicity)} ${paramArg})`,
       requireSkill(`inst && inst~>master~>superMaster && equal(inst~>name ${literal(name)}) && inst~>numInst == ${literal(multiplicity)} && equal(inst~>orient ${literal(orient)})`,
         `Could not create the requested PCell instance ${name}`),
@@ -480,7 +591,7 @@ function writeProgram(plan, sourceRevision) {
       ${buildCommands(plan)}
       ${header('layout', plan.target)}
       ${netsAndTerms}
-      ${layoutObjects}
+      ${layoutObjects()}
       ${record('END')}
       payload = buildString(reverse(rows) "\\n")
       ${requireSkill('dbSave(cv)', `Could not save OA layout ${label}`)}

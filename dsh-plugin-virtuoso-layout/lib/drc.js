@@ -15,13 +15,13 @@
  *   The same rulecheck appears in a global table and again in per-cell detail
  *   blocks, so counts must be read per-section or they double-count.
  *
- * `*.drc.results` — the ASCII results database: `<cell> <maxResults>`, then one
+ * `*.drc.results` — the ASCII results database: `<cell> <databasePrecision>`, then one
  *   record per check:
  *     GP_6                              <- check name
  *     80 80 2 Apr  3 21:46:05 2026      <- count, mirrored count, timestamp
  *     Rule File Pathname: /home/...
  *     Minimum extension from AA region to GP  0.32     <- rule description
- *     p 1 4                             <- violation: polygon, layer, vertex count
+ *     p 1 4                             <- violation: polygon, ordinal, vertex count
  *     CN work c 1 0 0 1 0 0 0           <- cell reference record
  *     177745 -560560                    <- vertex, as x y pairs
  *
@@ -165,76 +165,99 @@ export function parseSummary(text) {
   }
 }
 
-/**
- * Parse a Calibre ASCII DRC results database.
- *
- * A check record is recognised by shape rather than by a name pattern: a bare
- * name line followed by a `<count> <count> <date>` line and a
- * `Rule File Pathname:` line. That avoids mistaking violation geometry for a
- * check name.
- */
-export function parseResults(text) {
-  const lines = text.split(/\r?\n/)
-  const head = /^(\S+)\s+(\d+)\s*$/.exec(lines[0] ?? '')
-  const checks = []
+const MARKER = /^([ep])\s+(\d+)\s+(\d+)$/i
+const COORDINATES = /^-?\d+(?:\s+-?\d+)+$/
 
-  for (let i = 0; i + 3 < lines.length; i++) {
-    const counts = /^(\d+)\s+(\d+)\s+(\d{1,2} \w{3}\s+\d{1,2} \d{2}:\d{2}:\d{2} \d{4})/.exec(lines[i + 1] ?? '')
-    if (counts === null) continue
-    if (!/^Rule File Pathname:/.test(lines[i + 2] ?? '')) continue
-    const name = (lines[i] ?? '').trim()
-    if (name === '' || /\s/.test(name)) continue
-    checks.push({
-      name,
-      count: Number(counts[1]),
-      mirror: Number(counts[2]),
-      date: counts[3],
-      ruleFile: lines[i + 2].replace(/^Rule File Pathname:\s*/, '').trim(),
-      description: (lines[i + 3] ?? '').trim(),
-      nameIndex: i,
-      bodyStart: i + 4,
-    })
+function readMarker(lines, index, end, header) {
+  const [, signature, ordinal, size] = header
+  const type = signature.toLowerCase() === 'p' ? 'polygon' : 'edges'
+  const dimensions = type === 'polygon' ? 2 : 4
+  const count = Number(size)
+  let cellReference
+  let cursor = index + 1
+  // Optional properties precede the coordinates. Only the cell transform
+  // participates in coordinate conversion. Never forward check text.
+  while (cursor < end && !COORDINATES.test(lines[cursor]) && !MARKER.test(lines[cursor])) {
+    const [property, cell, space, ...values] = lines[cursor++].split(/\s+/)
+    if (property === 'CN') {
+      const transform = values.slice(0, 6).map(Number)
+      cellReference = { cell, cellSpace: space === 'c',
+        transform: transform.length === 6 && transform.every(Number.isSafeInteger) ? transform : null }
+    }
   }
+  const coordinates = []
+  for (let n = 0; n < count && cursor < end; n++, cursor++) {
+    const line = lines[cursor]
+    if (!COORDINATES.test(line)) break
+    const numbers = line.split(/\s+/).map(Number)
+    if (numbers.length !== dimensions || !numbers.every(Number.isSafeInteger)) break
+    coordinates.push(numbers)
+  }
+  return { type, ordinal: Number(ordinal), ...(cellReference && { cellReference }),
+    coordinates, complete: coordinates.length === count && count >= (type === 'polygon' ? 3 : 1) }
+}
 
-  for (let k = 0; k < checks.length; k++) {
-    const check = checks[k]
-    const end = k + 1 < checks.length ? checks[k + 1].nameIndex : lines.length
-    const body = lines.slice(check.bodyStart, end)
-    const polygons = body.filter((line) => /^p\s/.test(line))
-    const vertices = []
-    if (polygons.length > 0) {
-      const header = /^p\s+\S+\s+(\d+)/.exec(polygons[0])
-      const expected = header === null ? 0 : Number(header[1])
-      // Vertices follow the `CN` reference record, as `x y` pairs.
-      let firstVertex = body.indexOf(polygons[0]) + 1
-      if (/^CN\s/.test(body[firstVertex] ?? '')) firstVertex += 1
-      for (const line of body.slice(firstVertex, firstVertex + expected)) {
-        const pair = /^\s*(-?\d+)\s+(-?\d+)\s*$/.exec(line)
-        if (pair === null) break
-        vertices.push([Number(pair[1]), Number(pair[2])])
+/** Parse ASCII DRC check headers and, on request, both marker geometries. */
+export function parseResults(text, { markers = false } = {}) {
+  const lines = text.replace(/^\uFEFF/, '').split(/\r?\n/).map((line) => line.trim())
+  const head = /^(\S+)\s+(\d+)$/.exec(lines[0] ?? '')
+  const checks = []
+  const countsLine = /^(\d+)\s+(\d+)\s+(\d+)\s+(\w{3}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}\s+\d{4}|\d{1,2}\s+\w{3}\s+\d{2}:\d{2}:\d{2}\s+\d{4})\b/
+  let i = 1
+  while (i + 1 < lines.length) {
+    const name = lines[i]
+    const counts = countsLine.exec(lines[i + 1])
+    if (!name || /\s/.test(name) || !counts) {
+      i++
+      continue
+    }
+    const [, count, mirror, textLines, date] = counts
+    const bodyStart = i + 2 + Number(textLines)
+    const checkText = lines.slice(i + 2, bodyStart)
+    let end = bodyStart
+    while (end + 1 < lines.length && !countsLine.test(lines[end + 1])) end++
+    if (end + 1 === lines.length) end = lines.length
+    const check = {
+      name, count: Number(count), mirror: Number(mirror), date,
+      ruleFile: checkText.find((line) => line.startsWith('Rule File Pathname:'))
+        ?.replace(/^Rule File Pathname:\s*/, ''),
+      description: checkText.find((line) => !line.startsWith('Rule File Pathname:')),
+      polygonRecords: 0, firstViolationVertices: [], records: 0,
+      ...(markers && { markers: [] }),
+    }
+    for (let j = bodyStart; j < end; j++) {
+      if (/^(p|b|v|e|CN)\s/i.test(lines[j])) check.records++
+      const header = MARKER.exec(lines[j])
+      if (!header) continue
+      const polygon = header[1].toLowerCase() === 'p'
+      if (polygon) check.polygonRecords++
+      if (markers || (polygon && check.polygonRecords === 1)) {
+        const marker = readMarker(lines, j, end, header)
+        if (polygon && check.polygonRecords === 1) check.firstViolationVertices = marker.coordinates
+        if (markers) check.markers.push(marker)
       }
     }
-    // A CN record marks a real violation geometry; bare counts are not geometries.
-    check.polygonRecords = polygons.length
-    check.firstViolationVertices = vertices
-    check.records = body.filter((line) => /^(p|b|v|CN)\s/.test(line)).length
+    checks.push(check)
+    i = end
   }
 
-  const violating = checks.filter((c) => c.count > 0)
+  const violating = checks.filter((check) => check.count > 0)
+  const precision = head ? Number(head[2]) : undefined
   return {
     kind: 'calibre-drc-results',
     cell: head?.[1],
-    maxResultsPerCheck: head === null ? undefined : Number(head[2]),
+    precision,
+    // Preserve the historical field for callers of the summary tooling.
+    maxResultsPerCheck: precision,
     checks,
     totals: {
-      violations: violating.reduce((sum, c) => sum + c.count, 0),
+      violations: violating.reduce((sum, check) => sum + check.count, 0),
       totalChecks: checks.length,
       failingChecks: violating.length,
     },
     failing: violating.slice().sort((a, b) => b.count - a.count),
   }
 }
-
 /**
  * Cross-validate a summary against its results database.
  *
@@ -271,10 +294,10 @@ export function reconcile(summary, results) {
 }
 
 /** Parse and verify the native report envelope before exposing any counts. */
-export function parseReport(text, kind) {
+export function parseReport(text, kind, options) {
   if (kind === 'results') {
-    const data = parseResults(text)
-    if (!data.cell || !Number.isSafeInteger(data.maxResultsPerCheck) ||
+    const data = parseResults(text, options)
+    if (!data.cell || !Number.isSafeInteger(data.precision) || data.precision <= 0 ||
         (data.checks.length === 0 && text.trim().split(/\r?\n/).length !== 1)) {
       throw new Error('invalid or incomplete Calibre ASCII DRC results database')
     }

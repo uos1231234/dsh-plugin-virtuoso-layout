@@ -18,6 +18,29 @@ node tools/virtuoso.mjs layout extract verify.json --pdk site.local.json > extra
 node tools/virtuoso.mjs layout simulate extraction.json --bench bench.local.json > comparison.json
 ```
 
+Use the read-only inspection commands to get geometry before creating the placement
+and to locate DRC results after verification.
+
+```powershell
+node tools/virtuoso.mjs layout inspect pcell --lib ProcessLib --cell Nmos --in-lib MyLib --params parameters.json > pcell.json
+node tools/virtuoso.mjs layout inspect tech --lib MyLib --layer Metal1 --via Via1 > technology.json
+Get-Content -Raw verify.json | node tools/virtuoso.mjs layout inspect drc - --check Metal1_Space --layer Metal1 > markers.json
+```
+
+`parameters.json` is an array of `{name, type, value}` overrides. Without overrides,
+the PCell query reads the default master. With them it evaluates an unsaved scratch
+variant and returns master-local terminal figures and effective parameters.
+Technology queries report installed layer/purpose pairs and standard via defaults.
+Marker lookup uses the same verification report and unchanged OA revision. It emits
+marker coordinates in microns and nearby top-level figures and instance-terminal candidates
+ranked by bounding-box distance. The optional layer filter is an OA layer name.
+Use `--help` for radius, pagination and candidate limits. The result can include
+unlocated or missing markers when the report has incomplete coordinate coverage.
+
+Keep each built view. Save corrections into a new placement file with an unused
+target cellview and run `plan → build → verify` again before deciding whether to
+extract and simulate.
+
 Use an explicit site profile with `id`, `techLib`, `layerMap`, `drcDeck`, `lvsDeck`, `strmout`, `cdsHome`, `calibre`, `mgcHome` and `licenseFile`. These paths refer to installed files on the EDA guest. For xRC, add `pexDeck`, `pexCapRules`, `pexResRules` and the actual `pexGround`. The Calibre profile recognizes SMIC018 deck names with a `p2mt3` through `p2mt6` stack token. Use matching C/R calibration files from the installed PDK and set `pexCorner` to the corresponding `typ`, `Cmin` or `Cmax`.
 
 The [project skill](../.dsh/skills/virtuoso-layout/SKILL.md) describes the placement constraints and bench input. The bench selects the installed model file and section explicitly. Set `simulator.executable` to an absolute guest path if Spectre is outside PATH, and optionally set `simulator.licenseFile` to a site license file.

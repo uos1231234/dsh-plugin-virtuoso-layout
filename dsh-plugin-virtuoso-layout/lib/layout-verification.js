@@ -262,16 +262,17 @@ function reportedPath(value, remoteRunDir) {
   return value && posix.resolve(remoteRunDir, value.replace(/^"(.*)"$/, '$1'))
 }
 
-function readDrcEvidence(summaryText, resultsText, { cell, remoteRunDir }) {
+export function readDrcEvidence(summaryText, resultsText, { cell, remoteRunDir }, { markers = false } = {}) {
   const summary = parseReport(summaryText, 'summary')
-  const results = parseReport(resultsText, 'results')
+  const results = parseReport(resultsText, 'results', { markers })
   check(summary.header['Layout Primary Cell'] === cell &&
     reportedPath(summary.header['Layout Path(s)'], remoteRunDir) === posix.join(remoteRunDir, FILES.gds),
   'DRC summary does not identify this run’s GDS and top cell')
   const comparison = reconcile(summary, results)
   check(comparison.agreement, 'DRC summary and ASCII results database disagree')
   return { status: summary.totals.violations === 0 ? 'pass' : 'fail', totals: summary.totals,
-    failing: summary.failing, warnings: summary.warnings }
+    failing: summary.failing, warnings: summary.warnings, resultsSha256: sha256(resultsText),
+    ...(markers && { results }) }
 }
 
 function lvsField(text, field) {
