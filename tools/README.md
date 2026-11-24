@@ -5,6 +5,25 @@ single-variable activation test (`workspace_create` only); mechanisms are proven
 here from the shell first, then wired in as thin adapters. Node builtins only, so
 they run before any DSH restart.
 
+## `virtuoso.mjs layout` — schematic to post-layout simulation
+
+Run each stage from the repository root. Save the JSON and inspect the exit code before starting the next stage. A stage that accepts an input file also accepts stdin via `-`.
+
+```powershell
+node tools/virtuoso.mjs layout read --lib MyLib --cell Pair > read.json
+node tools/virtuoso.mjs layout plan --spec placement.json read.json > plan.json
+node tools/virtuoso.mjs layout build plan.json > build.json
+node tools/virtuoso.mjs layout verify build.json --pdk site.local.json > verify.json
+node tools/virtuoso.mjs layout extract verify.json --pdk site.local.json > extraction.json
+node tools/virtuoso.mjs layout simulate extraction.json --bench bench.local.json > comparison.json
+```
+
+Use an explicit site profile with `id`, `techLib`, `layerMap`, `drcDeck`, `lvsDeck`, `strmout`, `cdsHome`, `calibre`, `mgcHome` and `licenseFile`. These paths refer to installed files on the EDA guest. For xRC, add `pexDeck`, `pexCapRules`, `pexResRules` and the actual `pexGround`. The Calibre profile recognizes SMIC018 deck names with a `p2mt3` through `p2mt6` stack token. Use matching C/R calibration files from the installed PDK and set `pexCorner` to the corresponding `typ`, `Cmin` or `Cmax`.
+
+The [project skill](../.dsh/skills/virtuoso-layout/SKILL.md) describes the placement constraints and bench input. The bench selects the installed model file and section explicitly. Set `simulator.executable` to an absolute guest path if Spectre is outside PATH, and optionally set `simulator.licenseFile` to a site license file.
+
+`0` means the operation succeeded, `1` means a design check found a failure, and `2` means invalid input or an operational failure. Verification may return `1` with an LVS `CORRECT` report and unresolved density violations. The upstream DRC status is retained if analysis proceeds to xRC. Raw logs, waveforms and foundry reports belong in local run directories.
+
 ## `drc.mjs` — structure Calibre DRC output
 
 Verified against **real Calibre runs** (`v2015.2_36.27`) on a SMIC 0.18

@@ -1,4 +1,21 @@
-# PEX：规则齐备，但 deck 与本机 Calibre 版本不兼容
+# Calibre xRC extraction
+
+The later layout workflow completed native Calibre xRC batch extraction and
+Spectre pre/post-layout simulation on an inverter and a differential pair.
+These runs used a six-metal SMIC018 typical RCC calibration. The available
+installation lacked three-metal calibration for this flow.
+
+Calibre v2015.2 accepted the installed rules through LVS extraction, xRC PDB
+generation and DSPF formatting. The earlier Tcl errors below came from passing
+an SVRF rule file to the Interactive runset entry point.
+
+The differential-pair test explicitly selected its real bulk reference port
+because the original deck default did not exist in that source subcircuit.
+The CLI verifies matching stack provenance and the DSPF reference net. The
+[CLI guide](tools/README.md) documents the site-local inputs. Foundry decks,
+calibration files, extracted netlists and raw EDA logs are kept at the site.
+
+## Historical experiment
 
 2026-10-17。用户要求"先看看寄生"。结论：**PEX 规则文件完整存在，但官方 deck
 在本机 Calibre 上尚未跑通，寄生提取暂未完成。** 下面的兼容性排查已记录；

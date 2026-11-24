@@ -2,8 +2,7 @@
 /**
  * drc.mjs — structure Calibre DRC output into JSON.
  *
- * Verified against real Calibre v2015.2_36.27 runs on a SMIC 0.18
- * (`smic18ee`) design, using the foundry DRC deck `SmicDR10T_<rev>.drc`.
+ * Verified against Calibre v2015.2_36.27 summary and ASCII results reports.
  *
  * Two artefacts, two grammars:
  *
@@ -21,7 +20,7 @@
  *     GP_6                              <- check name
  *     80 80 2 Apr  3 21:46:05 2026      <- count, mirrored count, timestamp
  *     Rule File Pathname: /home/...
- *     <free-text rule description>      <- rule description, never parsed
+ *     Minimum extension from AA region to GP  0.32     <- rule description
  *     p 1 4                             <- violation: polygon, layer, vertex count
  *     CN work c 1 0 0 1 0 0 0           <- cell reference record
  *     177745 -560560                    <- vertex, as x y pairs
@@ -154,6 +153,7 @@ export function parseSummary(text) {
     warnings,
     sections,
     globalSection: global?.name,
+    checks: globalChecks,
     totals: {
       violations: failing.reduce((sum, c) => sum + c.count, 0),
       failingChecks: failing.length,
@@ -206,14 +206,12 @@ export function parseResults(text) {
       const header = /^p\s+\S+\s+(\d+)/.exec(polygons[0])
       const expected = header === null ? 0 : Number(header[1])
       // Vertices follow the `CN` reference record, as `x y` pairs.
-      const cn = body.findIndex((line) => /^CN\s/.test(line))
-      if (cn !== -1) {
-        for (const line of body.slice(cn + 1)) {
-          const pair = /^(-?\d+)\s+(-?\d+)$/.exec(line)
-          if (pair === null) break
-          vertices.push([Number(pair[1]), Number(pair[2])])
-          if (vertices.length >= expected) break
-        }
+      let firstVertex = body.indexOf(polygons[0]) + 1
+      if (/^CN\s/.test(body[firstVertex] ?? '')) firstVertex += 1
+      for (const line of body.slice(firstVertex, firstVertex + expected)) {
+        const pair = /^\s*(-?\d+)\s+(-?\d+)\s*$/.exec(line)
+        if (pair === null) break
+        vertices.push([Number(pair[1]), Number(pair[2])])
       }
     }
     // A CN record marks a real violation geometry; bare counts are not geometries.
@@ -245,6 +243,10 @@ export function parseResults(text) {
  * property that makes this a test rather than a re-read.
  */
 export function reconcile(summary, results) {
+  const summaryCell = summary.header?.['Layout Primary Cell']
+  const resultsCell = results.cell
+  const sameReportKind = summary.kind === 'calibre-drc-summary' && results.kind === 'calibre-drc-results'
+  const sameCell = Boolean(summaryCell) && summaryCell === resultsCell
   const fromSummary = new Map((summary.failing ?? []).map((c) => [c.name, c.count]))
   const fromResults = new Map((results.failing ?? []).map((c) => [c.name, c.count]))
   const names = [...new Set([...fromSummary.keys(), ...fromResults.keys()])].sort()
@@ -258,21 +260,50 @@ export function reconcile(summary, results) {
     kind: 'calibre-drc-reconcile',
     summaryViolations: summary.totals?.violations,
     resultsViolations: results.totals?.violations,
-    agreement: disagreements.length === 0 && summary.totals?.violations === results.totals?.violations,
+    summaryCell,
+    resultsCell,
+    reason: !sameReportKind ? 'expected a summary and an ASCII results database' :
+      !sameCell ? 'summary and results identify different top cells' : undefined,
+    agreement: sameReportKind && sameCell && disagreements.length === 0 &&
+      summary.totals?.violations === results.totals?.violations,
     disagreements,
   }
 }
 
-/** Read and parse a file by extension; returns a structured result, never throws. */
+/** Parse and verify the native report envelope before exposing any counts. */
+export function parseReport(text, kind) {
+  if (kind === 'results') {
+    const data = parseResults(text)
+    if (!data.cell || !Number.isSafeInteger(data.maxResultsPerCheck) ||
+        (data.checks.length === 0 && text.trim().split(/\r?\n/).length !== 1)) {
+      throw new Error('invalid or incomplete Calibre ASCII DRC results database')
+    }
+    return data
+  }
+  if (kind !== 'summary') throw new Error('expected DRC report type summary or results')
+
+  const data = parseSummary(text)
+  const finishedChecks = /^TOTAL DRC RuleChecks Executed:\s*(\d+)\s*$/m.exec(text)
+  const finishedResults = /^TOTAL DRC Results Generated:\s*(\d+)\s*(?:\(\d+\))?\s*$/m.exec(text)
+  if (!/^=+\s+CALIBRE::DRC(?:-H)? SUMMARY REPORT\s*$/m.test(text) ||
+      !data.header['Layout Primary Cell'] || data.globalSection !== 'RULECHECK RESULTS STATISTICS' ||
+      !finishedChecks || Number(finishedChecks[1]) !== data.totals.executedChecks ||
+      !finishedResults || Number(finishedResults[1]) !== data.totals.violations ||
+      data.totals.executedChecks === 0 || data.checks.some((check) => check.status === 'unknown')) {
+    throw new Error('invalid or incomplete Calibre DRC summary report')
+  }
+  return data
+}
+
+/** Read and parse a report, reporting errors in the same shape as file I/O. */
 export async function parseFile(path) {
-  let text
   try {
-    text = await readFile(path, 'utf8')
+    const text = await readFile(path, 'utf8')
+    const kind = path.endsWith('.drc.results') ? 'results' : 'summary'
+    return { ok: true, path, data: parseReport(text, kind) }
   } catch (error) {
     return { ok: false, path, error: String(error?.message ?? error) }
   }
-  const parsed = path.endsWith('.drc.results') ? parseResults(text) : parseSummary(text)
-  return { ok: true, path, data: parsed }
 }
 
 /* ── CLI ─────────────────────────────────────────────────────────────────── */
@@ -280,8 +311,10 @@ export async function parseFile(path) {
 /** Compact human line for one failing check. */
 const describe = (check) => `  ${String(check.count).padStart(5)}  ${check.name}${check.description ? `  — ${check.description}` : ''}`
 
-async function main(argv) {
-  const [command, ...rest] = argv
+export async function main(argv) {
+  const [command, ...args] = argv
+  const asJson = args.includes('--json')
+  const rest = args.filter((arg) => arg !== '--json')
   switch (command) {
     case 'summary': {
       const result = await parseFile(rest[0])
@@ -290,6 +323,10 @@ async function main(argv) {
         return 1
       }
       const { data } = result
+      if (asJson) {
+        console.log(JSON.stringify(data))
+        return 0
+      }
       console.log(`cell=${data.header['Layout Primary Cell']} rule=${data.header['Rule File Pathname']}`)
       console.log(`checks=${data.totals.totalChecks} executed=${data.totals.executedChecks} not-executed=${data.totals.notExecutedChecks}`)
       console.log(`violations=${data.totals.violations} failingChecks=${data.totals.failingChecks}`)
@@ -303,6 +340,10 @@ async function main(argv) {
         return 1
       }
       const { data } = result
+      if (asJson) {
+        console.log(JSON.stringify(data))
+        return 0
+      }
       console.log(`cell=${data.cell} checks=${data.totals.totalChecks} violations=${data.totals.violations} failingChecks=${data.totals.failingChecks}`)
       console.log(data.failing.map(describe).join('\n'))
       return 0
@@ -314,11 +355,11 @@ async function main(argv) {
         return 1
       }
       const verdict = reconcile(a.data, b.data)
-      console.log(JSON.stringify(verdict, null, 2))
+      console.log(JSON.stringify(verdict, null, asJson ? undefined : 2))
       return verdict.agreement ? 0 : 1
     }
     default: {
-      console.log('usage: node tools/drc.mjs <summary|results|check> <file> [file2]')
+      console.error('usage: node tools/drc.mjs <summary|results|check> <file> [file2] [--json]')
       return 1
     }
   }
@@ -326,5 +367,5 @@ async function main(argv) {
 
 import { pathToFileURL } from 'node:url'
 if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  main(process.argv.slice(2)).then((code) => process.exit(code))
+  process.exitCode = await main(process.argv.slice(2))
 }

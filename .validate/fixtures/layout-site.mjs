@@ -1,0 +1,15 @@
+export const fixturePdk = Object.freeze({
+  id: 'smic18ee',
+  techLib: 'smic18ee',
+  layerMap: '/fixture/layer-map',
+  drcDeck: '/fixture/check_p2mt6.drc',
+  lvsDeck: '/fixture/check.lvs',
+  strmout: '/fixture/bin/strmout',
+  cdsHome: '/fixture/cadence',
+  calibre: '/fixture/bin/calibre',
+  mgcHome: '/fixture/calibre',
+  licenseFile: '/fixture/authorized-license-path',
+  pexDeck: '/fixture/extract.xrc',
+  pexCapRules: '/fixture/calibration_p2mt6_example_typ.C',
+  pexResRules: '/fixture/calibration_p2mt6_example_typ.R',
+})

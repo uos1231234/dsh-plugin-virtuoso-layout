@@ -21,6 +21,7 @@
  *   node tools/virtuoso.mjs virtuoso-running|bridge-status|windows
  *   node tools/virtuoso.mjs screenshot [target]
  *   node tools/virtuoso.mjs eval <skill expression>
+ *   node tools/virtuoso.mjs layout --help
  *
  * All named exports are re-exported, so a one-off script can import this path
  * instead of reaching into the package directory.
@@ -29,6 +30,10 @@ export * from '../dsh-plugin-virtuoso-layout/lib/virtuoso.js'
 
 import { main } from '../dsh-plugin-virtuoso-layout/lib/virtuoso.js'
 
-// `main` is the same switch the library exposes, so the CLI surface cannot fall
-// behind the library surface.
-process.exit(await main(process.argv.slice(2)))
+const args = process.argv.slice(2)
+if (args[0] === 'layout') {
+  const { layoutMain } = await import('../dsh-plugin-virtuoso-layout/lib/layout-cli.js')
+  process.exitCode = await layoutMain(args.slice(1))
+} else {
+  process.exitCode = await main(args)
+}

@@ -3,9 +3,10 @@
 **An AI agent that drives Cadence Virtuoso to draw layout — packaged as a DeepSeek Harness plugin.**
 
 12 host-side tools, zero runtime dependencies, driving **Virtuoso 6.1.7-64b** inside a
-RHEL 6.5 VMware guest. Verified end to end on a real SMIC 0.18 µm process: the layout it
-produced passes Calibre **DRC** with zero geometry violations and passes **LVS** as a
-recognised `<model>` device.
+RHEL 6.5 VMware guest. The original single-device experiment passed **LVS** on
+SMIC 0.18 µm and retained six density violations in **DRC**. The layout CLI now
+offers schematic-driven OA layout, analog constraints, Calibre xRC and matched
+Spectre pre/post-layout analysis.
 
 ![The layout it drew](artifacts/nmos15-final.png)
 
@@ -37,6 +38,27 @@ XTEST key/mouse injection exists, but only to unwedge a modal dialog. It is neve
 primary channel.
 
 ---
+
+## Schematic-driven layout and verification
+
+Run `node tools/virtuoso.mjs layout --help` from this checkout. The workflow is
+`read → plan → build → verify → extract → simulate`. Each stage writes a JSON record
+for the next stage. A placement plan declares the PCells, terminal map and explicit
+routes. The build reads back saved OA geometry and checks the declared matching and
+guard-ring constraints. Verification binds DRC/LVS to the same GDS and an independently
+exported CDL. xRC consumes that record and the same-stack installed calibration.
+Spectre compares two serial runs with one bench and records the measured differences.
+
+In a live DSH CLI differential-pair exercise, Calibre reported four M1 spacing
+violations after the first build. DSH widened two mirrored output routes. We
+resumed the session with a fresh target to preserve the first layout. LVS returned
+`CORRECT` and the revised isolated cell retained ten density violations.
+Calibre xRC and both serial Spectre runs completed on that revised cell. A
+separate CLI rerun with site-local inputs reproduced the verification outcomes
+and both waveform CSVs byte for byte.
+
+The [CLI guide](tools/README.md) shows the site profile and execution order.
+DSH can load the [project skill](.dsh/skills/virtuoso-layout/SKILL.md) in this checkout.
 
 ## The 12 tools
 
@@ -102,13 +124,10 @@ cannot satisfy a `<rv>` metal-density target. Density compliance in a full chip 
 **unverified**. These remain six **unmet** checks — not an exemption — and nothing here
 is claimed to be DRC-clean or ready for tape-out.
 
-**Not achieved, and documented as such:**
-
-- **PEX / parasitic extraction.** The xRC rules are complete, but the shipped deck was
-  written for Calibre xRC v2009.3 and the installed v2015.2 rejects it with Tcl parse
-  errors. See [`PEX-STATUS.md`](PEX-STATUS.md). A control experiment with the unmodified
-  deck rules out editor error.
-- Multi-finger / common-centroid matching, place & route, clock tree, power grid.
+This section records the original single-device experiment. The later workflow
+completed Calibre xRC and serial Spectre comparisons on small circuits with a
+supported six-metal typical calibration. The [extraction record](PEX-STATUS.md)
+explains the batch entry point and the three-metal calibration dependency.
 
 ---
 
@@ -129,7 +148,7 @@ the interesting part.
 | [`WELLS.md`](WELLS.md) | well experiments: P-well is *derived*, N-well needs a pickup |
 | [`RING-AND-CONNECTIVITY.md`](RING-AND-CONNECTIVITY.md) | measuring connectivity: 8 islands, a ring fixes 1 of 3 |
 | [`RING-CLOSED.md`](RING-CLOSED.md) | closing the ring; why only a screenshot revealed it was a solid bar |
-| [`PEX-STATUS.md`](PEX-STATUS.md) | why parasitic extraction does not run here |
+| [`PEX-STATUS.md`](PEX-STATUS.md) | xRC batch extraction, process-stack scope and the earlier failure |
 
 ### Three findings worth the read
 

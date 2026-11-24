@@ -1096,11 +1096,13 @@ export function apply(ctx) {
           const sibling = await parseFile(other)
           if (sibling.ok !== true) throw new Error(withHint(`cannot parse "${other}": ${sibling.error}`))
           const { reconcile } = await import('./drc.js')
-          out.comparison = reconcile(data, sibling.data)
+          out.comparison = data.kind === 'calibre-drc-summary'
+            ? reconcile(data, sibling.data)
+            : reconcile(sibling.data, data)
           if (out.comparison.agreement !== true) {
             throw new Error(
               `DRC cross-validation failed between "${path}" and "${other}": ` +
-                JSON.stringify(out.comparison.disagreements),
+                (out.comparison.reason ?? JSON.stringify(out.comparison.disagreements)),
             )
           }
         }

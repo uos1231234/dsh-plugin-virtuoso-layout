@@ -1,4 +1,8 @@
 node_modules/
+artifacts/layout-runs/
+artifacts/signoff/
+artifacts/simulation/
+*.local.json
 __pycache__/
 *.py[cod]
 *.bak
